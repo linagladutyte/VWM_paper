@@ -1,0 +1,270 @@
+```{r message=FALSE, warning=FALSE, include=FALSE, paged.print=FALSE}
+library(tidyverse)
+library(readxl)
+library(writexl)
+library(DescTools)
+library(ggpubr)
+library(rstatix)
+library(afex)
+library(emmeans)
+library(effectsize)
+```
+
+```{r}
+# load the data
+
+beh_params <-
+  read_xlsx("cap_perf_rt_for_stats.xlsx")
+
+demographic <- read_xlsx("clean_demographic_questionnaires_hormones.xlsx")
+
+age = demographic[c("id", "group", "age")]
+
+head(beh_params)
+
+```
+
+```{r}
+# Inspect column names
+
+rt <- beh_params[, c('id', 'stimuli_count', 'rt', 'group')]
+head(rt)
+
+```
+
+**Remove Participants' Data**
+
+```{r}
+# Load the subject IDs from the text file into a vector
+subjects_to_remove <- readLines("subjects_to_remove.txt", warn = FALSE)
+
+# Convert the vector of strings to numeric
+subjects_to_remove <- as.numeric(subjects_to_remove)
+
+# Print the vector to confirm
+print(subjects_to_remove)
+
+```
+
+```{r}
+
+# Exclude subject's data
+rt <- rt %>%
+  filter(!id %in% subjects_to_remove)
+
+# Remove male group
+#rt <- rt[!(rt$group == "M"), ]
+
+# Standardize all column names to lowercase
+names(rt) <- tolower(names(rt))
+
+# Merge with age
+rt <- merge(rt, age, by = c("id", "group"), all.x = TRUE)
+
+# Convert 'group' column to a factor and reorder its levels
+rt <- rt %>%
+  mutate(group = factor(group, levels = c("M", "NCF", "NCL", "OC", "IUD")))
+
+head(rt)
+```
+
+## **Desciptive Stats (between groups)**
+
+```{r}
+rt %>% group_by(group) %>% get_summary_stats(rt, type = "mean_sd")
+```
+
+**Visualizations**
+
+```{r}
+
+bxp_rt <-
+  ggboxplot(
+    rt, 
+    x = "group",
+    y = "rt",
+    xlab = "Group",
+    ylab = "Response Time (ms)",
+    fill = "group") + scale_fill_manual(values = c("#FFCC33", "#CCFF66", "#FF99CC", "#9966CC", "#00CCFF")) + theme(legend.position = "none") + font("axis.title", size = 22) + 
+ font("xy.text", size = 18)  + stat_summary(fun.y = mean, geom = "errorbar", aes(ymax = ..y.., ymin = ..y.., group = factor(group)), width = 0.8, linetype = "dashed", position = position_dodge())
+plot(bxp_rt)
+```
+
+```{r}
+
+# convert values to factors
+rt <- rt %>% convert_as_factor(id, group, stimuli_count)
+rt <- rt %>% reorder_levels("group", order = c("M", "NCF", "NCL", "OC", "IUD",)) %>% reorder_levels("stimuli_count", order = c("3_stim", "4_stim"))
+
+head(rt)
+```
+
+# **DESCRIPTIVE STATS**
+
+```{r}
+#summary stats
+rt %>% group_by(stimuli_count, group) %>% get_summary_stats(rt, type = "mean_sd")
+
+```
+
+```{r}
+rt %>% group_by(stimuli_count) %>% get_summary_stats(rt, type = "mean_sd")
+```
+
+**Visualizations**
+
+```{r}
+
+bxp_rt_stim <-
+  ggboxplot(
+    rt,
+    x = "stimuli_count",
+    y = "rt",
+    fill = "group",
+    xlab = "Set Size",
+    legend.title = "Group",
+    ylab = "Response Time (miliseconds)",
+    alpha = 0.7,
+    palette = c("#FFFF66", "#33CC33","#663333", "#FF0066",  "#0000FF")) + scale_x_discrete(labels = c("3 stimuli", "4 stimuli")) + theme(legend.position = "right")
+
+bxp_rt_stim
+```
+
+```{r}
+#grafikas
+bxp_stim <-
+  ggboxplot(
+    rt,
+    x = "stimuli_count",
+    y = "rt",
+    xlab = "Set Size",
+    ylab = "Response Time (miliseconds)",
+    alpha = 0.3) + scale_x_discrete(labels = c("3 stimuli", "4 stimuli"))
+
+bxp_stim
+```
+
+## **Check Assumptions**
+
+1.  **Linearity Assumption**
+
+```{r}
+ggscatter(
+  rt, x = "age", y = "rt",
+  color = "group", add = "reg.line"
+  )+
+  stat_regline_equation(
+    aes(label =  paste(..eq.label.., ..rr.label.., sep = "~~~~"), color = group)
+    )
+```
+
+2.  **Homogeneity of regression slopes**
+
+```{r}
+
+rt %>% anova_test(rt ~ group*age)
+
+```
+
+3.  **Normality of residuals**
+
+```{r}
+rt |> 
+  group_by(group) |> 
+  shapiro_test(rt)
+```
+
+5.  **Homogeneity of variances**
+
+```{r}
+
+levene_test(rt, rt~group)
+
+```
+
+5.  **Outliers**
+
+```{r}
+rt |> 
+group_by(group) |> 
+identify_outliers(rt)
+```
+
+## **Mixed ANCOVA**
+
+```{r}
+aov <- anova_test(
+  data = rt, 
+  dv = rt, 
+  wid = id, 
+  between = group, 
+  within = stimuli_count, 
+  covariate = age
+)
+
+get_anova_table(aov)
+
+```
+
+### **Post Hoc**
+
+```{r}
+pwc <- rt %>%
+  group_by(group) %>%  
+  emmeans_test(
+    rt ~ stimuli_count, covariate = age, 
+    p.adjust.method = "bonferroni"
+    ) 
+pwc 
+```
+
+### AGE
+
+```{r}
+ggplot(rt, aes(age, rt))+
+  geom_point()+
+  geom_smooth(method = "lm")
+```
+
+```{r}
+rt |> cor_test(rt, age)
+```
+
+## Graphic
+
+```{r}
+rt.png <- ggplot(rt, aes(x = stimuli_count, y = rt, fill = group)) +
+  geom_violin(aes(fill = group), position = position_dodge(width = 0.8), trim = FALSE) + # Add fill aesthetic
+  geom_boxplot(aes(fill = group), width = 0.2, position = position_dodge(width = 0.8)) + # Add fill aesthetic
+  geom_jitter(position = position_dodge(width = 0.8), alpha = 0.5) +
+  labs(x = " ", y = "Reaction time (ms)", fill = "Group") + # Specify legend title
+  scale_fill_manual(values = c("#0072B2", "#009E73", "#E69F00", "#999999", "#CC79A7")) +
+  theme_classic() +
+  theme(axis.text = element_text(size = 14), axis.title = element_text(size = 18),
+        legend.position = "right", legend.title = element_text(size = 16), legend.text = element_text(size = 14)) +
+  scale_x_discrete(labels = c("3 stimuli", "4 stimuli"))
+
+
+rt.png
+```
+
+```{r}
+rt.png <- ggplot(rt, aes(x = stimuli_count, y = rt, fill = group)) +
+  geom_boxplot(aes(fill = group), width = 0.6, position = position_dodge(width = 0.8),
+               color = "black", # Modify box color and fill
+               alpha = 0.7, # Add transparency to fill color
+               outlier.shape = TRUE) + # Remove outliers
+  labs(x = " ", y = "Reaction time (ms)", fill = "Group") +
+  scale_fill_manual(values = c("#0072B2", "#009E73", "#E69F00", "#999999", "#CC79A7")) +
+  theme_classic() +
+  theme(axis.text = element_text(size = 14), axis.title = element_text(size = 18),
+        legend.position = "right", legend.title = element_text(size = 16), legend.text = element_text(size = 14)) +
+  scale_x_discrete(labels = c("3 stimuli", "4 stimuli"))+
+   ylim(400, 1400)
+
+rt.png
+```
+
+```{r}
+ggsave("figures/rt.png", rt.png, width = 6, height = 4.5)
+```

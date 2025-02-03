@@ -1,0 +1,238 @@
+
+
+```{r message=FALSE, warning=FALSE, include=FALSE, paged.print=FALSE}
+library(tidyverse)
+library(readxl)
+library(writexl)
+library(DescTools)
+library(ggpubr)
+library(rstatix)
+library(afex)
+library(emmeans)
+library(effectsize)
+library(simr)
+```
+
+# Load and Inspect the Data
+
+```{r}
+# load the data
+beh_params <-
+  read_xlsx("cap_perf_rt_for_stats.xlsx")
+
+demographic <- read_xlsx("clean_demographic_questionnaires_hormones.xlsx")
+
+age = demographic[c("id", "group", "age")]
+
+head(beh_params)
+
+```
+
+```{r}
+# Inspect column names
+
+capacity <- beh_params[, c('id', 'stimuli_count', 'memory_capacity', 'group')]
+head(capacity)
+
+```
+
+**Aggregate the Data** (to get memory capacity per group across all stimuli conditions)
+
+```{r}
+
+capacity <- capacity %>%
+  group_by(id, group) %>%
+  summarise(
+    mean_capacity = mean(memory_capacity, na.rm = TRUE),
+    .groups = "drop"  # This drops the grouping structure after summarising
+  )
+
+# Printing the aggregated data
+print(capacity)
+```
+
+
+**Remove Participants' Data**
+
+```{r}
+# Load the subject IDs from the text file into a vector
+subjects_to_remove <- readLines("subjects_to_remove.txt", warn = FALSE)
+
+# Convert the vector of strings to numeric
+subjects_to_remove <- as.numeric(subjects_to_remove)
+
+# Print the vector to confirm
+print(subjects_to_remove)
+
+```
+
+**exclude data**
+
+```{r}
+
+# Exclude subject's data
+capacity <- capacity %>%
+  filter(!id %in% subjects_to_remove)
+
+# Remove male group
+#capacity <- capacity[!(capacity$group == "M"), ]
+
+# Standardize all column names to lowercase
+names(capacity) <- tolower(names(capacity))
+
+# Merge with age
+capacity <- merge(capacity, age, by = c("id", "group"), all.x = TRUE)
+
+# Convert 'group' column to a factor and reorder its levels
+capacity <- capacity %>%
+  mutate(group = factor(group, levels = c("M","NCF", "NCL", "OC", "IUD")))
+
+
+head(capacity)
+```
+
+##  **Desciptive Stats**
+```{r}
+capacity %>% group_by(group) %>% get_summary_stats(mean_capacity, type = "mean_sd")
+```
+
+**Visualizations**
+```{r}
+
+bxp_cap <-
+  ggboxplot(
+    capacity, 
+    x = "group",
+    y = "mean_capacity",
+    xlab = "Group",
+    ylab = "Memory capacity\n(objects)",
+    fill = "group") + scale_fill_manual(values = c("#FFCC33", "#CCFF66", "#FF99CC", "#9966CC", "#00CCFF")) + theme(legend.position = "none") + font("axis.title", size = 22) + 
+ font("xy.text", size = 18)  + stat_summary(fun.y = mean, geom = "errorbar", aes(ymax = ..y.., ymin = ..y.., group = factor(group)), width = 0.8, linetype = "dashed", position = position_dodge())
+plot(bxp_cap)
+```
+
+
+## **Check Assumptions**
+
+1. **Linearity Assumption**
+
+```{r}
+ggscatter(
+  capacity, x = "age", y = "mean_capacity",
+  color = "group", add = "reg.line"
+  )+
+  stat_regline_equation(
+    aes(label =  paste(..eq.label.., ..rr.label.., sep = "~~~~"), color = group)
+    )
+```
+
+
+2. **Homogeneity of regression slopes**
+
+```{r}
+
+capacity %>% anova_test(mean_capacity ~ group*age)
+
+```
+
+
+3. **Normality of test**
+
+
+```{r}
+capacity |> 
+  group_by(group) |> 
+  shapiro_test(mean_capacity)
+```
+
+
+4. **Homogeneity of variances**
+
+```{r}
+levene_test(capacity, mean_capacity~group)
+
+```
+
+5. **Outliers**
+
+```{r}
+
+model.metrics %>% 
+  filter(abs(.std.resid) > 3) %>%
+  as.data.frame()
+```
+
+**Log transform the data**
+
+```{r}
+
+# Check for zero and negative values
+capacity %>%
+  summarise(
+    zero_count = sum(mean_capacity == 0),
+    negative_count = sum(mean_capacity < 0)
+  ) %>%
+  print()
+
+
+# Log transform data 
+capacity <- capacity %>%
+  mutate(log_mean_capacity = log(mean_capacity))
+
+capacity
+```
+
+
+## **ANCOVA**
+```{r}
+res.aov <- capacity %>% anova_test(mean_capacity ~ age * group)
+get_anova_table(res.aov)
+
+```
+
+```{r}
+results <- capacity  %>%
+  group_by(group) %>%
+  cor_test(mean_capacity, age)
+results
+```
+
+
+```{r}
+
+# Your original ggplot code with aligned geoms
+capacity.png <- ggplot(capacity, aes(x = group, y = mean_capacity, fill = group)) +
+  geom_boxplot(width = 0.6, position = position_dodge(width = 0.8), color = "black", alpha = 0.7, outlier.shape = TRUE) + 
+  labs(x = " ", y = "Capacity", fill = "Group") +
+  scale_fill_manual(values = c("#0072B2", "#009E73", "#E69F00", "#999999", "#CC79A7")) +
+  theme_classic() +
+  theme(axis.text = element_text(size = 14), axis.title = element_text(size = 18),
+        legend.position = "right", legend.title = element_text(size = 16), legend.text = element_text(size = 14)) 
+
+# Print the plot
+print(capacity.png)
+```
+
+```{r}
+ggsave("figures/capacity.png", capacity.png, width = 6, height = 4.5)
+```
+
+
+```{r}
+scatter_plot <- ggplot(capacity, aes(x = age, y = mean_capacity, color = group)) +
+  geom_point(size = 3, alpha = 0.7) + # Add points with some transparency
+  geom_smooth(method = "lm", se = FALSE) + # Add regression lines without confidence intervals
+  labs(x = "Age", y = "Capacity", color = "Group") + # Add axis labels and legend title
+  scale_color_manual(values = c("#0072B2", "#009E73", "#E69F00", "#999999", "#CC79A7")) + # Use scale_color_manual for color aesthetic
+  theme_classic() + # Use a classic theme
+  theme(axis.text = element_text(size = 14), axis.title = element_text(size = 18),
+        legend.position = "right", legend.title = element_text(size = 16), legend.text = element_text(size = 14))
+
+# Print the plot
+scatter_plot
+```
+```{r}
+ggsave("figures/scatter.png", scatter_plot, width = 6, height = 4.5)
+```
+
+

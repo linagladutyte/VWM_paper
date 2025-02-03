@@ -1,0 +1,229 @@
+---
+title: "Demo_table"
+execute:
+  warning: false
+  message: false
+format: html
+editor: visual
+---
+
+```{r}
+library(tidyverse)
+library(rstatix)
+library(ggpubr)
+library(gtsummary)
+library(stats)
+library(car)
+library(readxl)
+library(PerformanceAnalytics)
+library(Hmisc)
+library(corrplot)
+```
+
+```{r}
+data <-
+  readxl::read_excel("data_for_correlations.xlsx")
+```
+
+**Remove Participants' Data**
+
+```{r}
+# Load the subject IDs from the text file into a vector
+subjects_to_remove <- readLines("subjects_to_remove.txt", warn = FALSE)
+
+# Convert the vector of strings to numeric
+subjects_to_remove <- as.numeric(subjects_to_remove)
+
+# Print the vector to confirm
+print(subjects_to_remove)
+
+```
+
+**exclude data, data wrgaling**
+
+```{r}
+
+# Exclude subject's data
+data <- data %>%
+  filter(!id %in% subjects_to_remove)
+
+# Define the desired order of factor levels
+desired_order <- c("M", "NCF", "NCL", "OC", "IUD")
+
+# Reorder the levels of the 'Group' factor variable
+data$group <- fct_relevel(data$group, desired_order)
+
+```
+
+```{r}
+Demographic_data <- data |> dplyr::select(group,fatigue_before_experiment, fatigue_after_ER,emotional_arousal_before_experiments, emotional_arousal_after_ER_task, handedness_coefficient, estradiol, progesterone, testosterone)
+
+demographic_summary_1 <- Demographic_data |>
+  tbl_summary(
+    by = group,
+    missing = "no",
+    statistic = list(
+      all_continuous() ~ "{mean} ({sd})"
+    )
+  ) |>
+  add_p(
+    test = all_continuous() ~ "aov",
+    pvalue_fun = function(x) style_pvalue(x, digits = 2)
+  )
+
+demographic_summary_1
+```
+
+```{r}
+res.aov <- data |>  anova_test(age ~ group)
+res.aov
+```
+
+```{r}
+pwc <- data |> 
+  emmeans_test(
+    age ~ group,
+    p.adjust.method = "fdr"
+    )
+pwc
+```
+
+```{r}
+res.aov2 <- data |>  anova_test(handedness_coefficient ~ group)
+res.aov2
+```
+
+#### RM-ANOVA: Analysis of EA and tiredness
+
+Filtrate just necessary data table
+
+```{r}
+RM_data <- data |> dplyr::select(id, group, fatigue_before_experiment, fatigue_after_ER,emotional_arousal_before_experiments, emotional_arousal_after_ER_task)
+```
+
+```{r}
+RM_data_long <- RM_data %>%
+  gather(key = "time", value = "score", fatigue_before_experiment, fatigue_after_ER) |> 
+  convert_as_factor(id, group, time)
+
+```
+
+```{r}
+res.aov5 <- anova_test(
+  data = RM_data_long, dv = score, wid = id,
+  between = group, within = time
+  )
+get_anova_table(res.aov5)
+```
+
+```{r}
+RM_data_long2 <- RM_data %>%
+  gather(key = "time", value = "score", emotional_arousal_before_experiments, emotional_arousal_after_ER_task) |> 
+  convert_as_factor(id, group, time)
+
+```
+
+```{r}
+res.aov6 <- anova_test( data = RM_data_long2, dv = score, wid = id, between = group, within = time ) 
+get_anova_table(res.aov6)
+```
+
+```{r}
+corr_data <- data |> dplyr::select(fatigue_before_experiment, fatigue_after_ER,emotional_arousal_before_experiments, emotional_arousal_after_ER_task, avg_cda_combined, memory_capacity, performance, rt)
+```
+
+```{r}
+# Calculate the correlation matrix
+cor_matrix <- cor(corr_data, use = "pairwise.complete.obs")
+
+# Print the correlation matrix
+
+```
+
+```{r}
+testRes = cor.mtest(corr_data, conf.level = 0.95)
+M = cor(corr_data, use ="pairwise.complete.obs")
+
+# Get the correlation matrix with adjusted p-values
+round(testRes$p,2)
+
+```
+
+```{r}
+chart.Correlation(corr_data, histogram=TRUE, pch=19)
+
+```
+
+```{r}
+corr_data2 <- data |> dplyr::select(handedness_coefficient, avg_cda_combined, memory_capacity, performance, rt)
+```
+
+```{r}
+testRes2 = cor.mtest(corr_data2, conf.level = 0.95)
+M2 = cor(corr_data2, use ="pairwise.complete.obs")
+M2
+round(testRes2$p,2)
+
+```
+
+```{r}
+p_ajust_all <- p.adjust(testRes2$p, method = "BH")
+round(p_ajust_all,2)
+```
+
+```{r}
+res.aov3 <- data |>  anova_test(testosterone ~ group)
+res.aov3
+```
+
+```{r}
+pwc <- data |> 
+  emmeans_test(
+    testosterone ~ group,
+    p.adjust.method = "fdr"
+    )
+pwc
+```
+
+```{r}
+women_data <- data |> 
+  dplyr::filter(group %in% c("NCF", "NCL", "OC", "IUD")) 
+
+women_data <- droplevels(women_data)
+
+```
+
+```{r}
+res.aov4 <- women_data |>  anova_test(testosterone ~ group)
+res.aov4
+```
+
+```{r}
+pwc <- women_data %>%
+  emmeans_test(
+    testosterone ~ group,
+    p.adjust.method = "bonferroni"
+  )
+pwc
+```
+
+```{r}
+res.aov5 <- women_data |>  anova_test(progesterone ~ group)
+res.aov5
+```
+
+pwc \<- women_data %\>% emmeans_test( testosterone \~ group, p.adjust.method = "bonferroni" ) pwc
+
+```{r}
+pwc <- women_data %>%
+  emmeans_test(
+    progesterone ~ group,
+    p.adjust.method = "bonferroni"
+  )
+pwc
+```
+
+```{r}
+res.aov7 <- women_data |>  anova_test(estradiol ~ group)
+res.aov7
+```

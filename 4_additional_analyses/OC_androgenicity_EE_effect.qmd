@@ -1,0 +1,127 @@
+---
+title: "OC_EE_Conc_analysis"
+execute:
+  warning: false
+  message: false
+format: html
+editor: visual
+---
+
+```{r}
+library(tidyverse)
+library(rstatix)
+library(ggpubr)
+library(gtsummary)
+library(stats)
+library(car)
+library(readxl)
+library(PerformanceAnalytics)
+library(Hmisc)
+library(corrplot)
+```
+
+```{r}
+data <-
+  readxl::read_excel("data_for_correlations.xlsx")
+```
+
+**Remove Participants' Data**
+
+```{r}
+# Load the subject IDs from the text file into a vector
+subjects_to_remove <- readLines("subjects_to_remove.txt", warn = FALSE)
+
+# Convert the vector of strings to numeric
+subjects_to_remove <- as.numeric(subjects_to_remove)
+
+# Print the vector to confirm
+print(subjects_to_remove)
+
+```
+
+**exclude data, data wrgaling**
+
+```{r}
+
+# Exclude subject's data
+data <- data %>%
+  filter(!id %in% subjects_to_remove)
+
+# Define the desired order of factor levels
+desired_order <- c("M", "NCF", "NCL", "OC", "IUD")
+
+# Reorder the levels of the 'Group' factor variable
+data$group <- fct_relevel(data$group, desired_order)
+
+```
+
+**Filter OC**
+
+```{r}
+OC_data <- data |> dplyr::filter(group == "OC")
+OC_data <- OC_data |> convert_as_factor(group, EE_conc, Androgenecity)
+str(OC_data)
+```
+
+## EE effect
+
+```{r}
+OC_data |> 
+  group_by(EE_conc) |> 
+  shapiro_test(avg_cda_combined, memory_capacity, performance, rt)
+```
+
+```{r}
+OC_data %>% 
+  group_by(EE_conc) %>% 
+  get_summary_stats(avg_cda_combined, memory_capacity, performance, rt, type = "mean_sd")
+```
+
+```{r}
+OC_data %>% t_test(avg_cda_combined ~ EE_conc)
+```
+
+```{r}
+OC_data %>% t_test(memory_capacity ~ EE_conc)
+```
+
+```{r}
+OC_data %>% t_test(performance ~ EE_conc)
+```
+
+```{r}
+OC_data %>% t_test(rt ~ EE_conc)
+```
+
+No effect of EE concentration
+
+## Andro effect
+
+```{r}
+OC_data |> 
+  group_by(Androgenecity) |> 
+  shapiro_test(avg_cda_combined, memory_capacity, performance, rt)
+```
+
+```{r}
+OC_data %>% 
+  group_by(Androgenecity) %>% 
+  get_summary_stats(avg_cda_combined, memory_capacity, performance, rt, type = "mean_sd")
+```
+
+
+```{r}
+OC_data %>% t_test(avg_cda_combined ~ Androgenecity)
+```
+
+```{r}
+OC_data %>% t_test(memory_capacity ~ EE_conc)
+```
+
+```{r}
+OC_data %>% t_test(performance ~ EE_conc)
+```
+
+```{r}
+OC_data %>% t_test(rt ~ EE_conc)
+```

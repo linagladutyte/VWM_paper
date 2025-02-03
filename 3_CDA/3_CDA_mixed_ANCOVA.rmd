@@ -1,0 +1,249 @@
+```{r message=FALSE, warning=FALSE, include=FALSE, paged.print=FALSE}
+#### reikiami paketai ir nustatymai
+
+library(tidyverse)
+library(readxl)
+library(writexl)
+library(DescTools)
+library(ggpubr)
+library(rstatix)
+library(emmeans)
+library(effectsize)
+library(gtsummary)
+library(broom)
+
+```
+
+-   mean CDA was extracted from the time window from 350 ms to 1000 ms
+
+```{r}
+# load the data
+
+cda <- read_xlsx("avg_cda_condition.xlsx")
+
+demographic <- read_xlsx("clean_demographic_questionnaires_hormones.xlsx")
+
+age = demographic[c("id", "group", "age")]
+
+head(cda)
+
+```
+
+**Remove Participants' Data**
+
+```{r}
+# Load the subject IDs from the text file into a vector
+subjects_to_remove <- readLines("subjects_to_remove.txt", warn = FALSE)
+
+# Convert the vector of strings to numeric
+subjects_to_remove <- as.numeric(subjects_to_remove)
+
+# Print the vector to confirm
+print(subjects_to_remove)
+
+```
+
+```{r}
+
+
+# Exclude subject's data
+cda <- cda %>%
+  filter(!id %in% subjects_to_remove)
+
+# Remove male group
+#cda <- cda[!(cda$group == "M"), ]
+
+# Standardize all column names to lowercase
+names(cda) <- tolower(names(cda))
+
+# Convert columns to a factor and reorder levels
+cda <- cda %>%
+  mutate(group = factor(group, levels = c("NCF", "NCL", "OC", "IUD", "M")))
+
+cda <- cda %>%
+  mutate(stimuli_count = factor(stimuli_count, levels = c("3_stim", "4_stim")))
+
+cda <- cda %>%
+  mutate(hemisphere = factor(hemisphere, levels = c("left", "right")))
+
+cda <- cda %>% convert_as_factor(id)
+
+cda
+```
+
+```{r}
+# Merge with age
+cda <- merge(cda, age, by = c("id", "group"), all.x = TRUE)
+cda
+```
+
+```{r}
+# Define the desired order of levels
+desired_order <- c( "M", "NCF", "NCL", "OC", "IUD")
+
+
+convert_and_reorder <- function(df) {
+  df$group <- factor(df$group, levels = desired_order)
+  return(df)
+}
+
+cda <- convert_and_reorder(cda)
+
+```
+
+##Descriptive Statistics
+
+**Mean and Median CDA amplitude by group, hemisphere and set size**
+
+```{r}
+print(cda %>% group_by(group, hemisphere, stimuli_count) %>% get_summary_stats(mean_cda, type = "median_iqr"))
+```
+
+```{r}
+cda %>% group_by(group, hemisphere, stimuli_count) %>% get_summary_stats(mean_cda, type = "mean_sd")
+
+```
+
+**Mean CDA amplitude by hemisphere and set size**
+
+```{r}
+cda %>% group_by(hemisphere, stimuli_count) %>% get_summary_stats(mean_cda, type = "mean_sd")
+```
+
+**Visualizations**
+
+```{r}
+
+bxp_cda_hph_st <-
+  ggboxplot(
+    cda,
+    x = "stimuli_count",
+    y = "mean_cda",
+    fill = "hemisphere",
+    xlab = "Set size",
+    legend.title = "Hemisphere",
+    ylab = "Mean CDA (µV)"
+  ) + scale_x_discrete(labels = c("3", "4")) + theme(legend.position = "top") + font("axis.title", size = 15) + font("legend.title", size = 14) + font("legend.text", size = 15) + font("xy.text", size = 15) + stat_summary(
+    fun.y = mean,
+    geom = "errorbar",
+    aes(
+      ymax = ..y..,
+      ymin = ..y..,
+      group = factor(hemisphere)
+    ),
+    width = 0.8,
+    linetype = "dashed",
+    position = position_dodge()
+  )
+
+bxp_cda_hph_st
+```
+
+**Mean CDA amplitude by hemisphere**
+
+```{r}
+cda %>% group_by(hemisphere) %>% get_summary_stats(mean_cda, type = "mean_sd")
+```
+
+```{r}
+#grafikas
+
+bxp_cda_hph <-
+  ggboxplot(
+    cda,
+    x = "hemisphere",
+    y = "mean_cda",
+    xlab = "Hemisphere",
+    ylab = "Mean CDA amplitude (µV)",
+    width = 0.6) + scale_x_discrete(labels = c("Left", "Right")) + stat_summary(fun.y = mean, geom = "errorbar", aes(ymax = ..y.., ymin = ..y.., group = factor(hemisphere)), width = 0.8, linetype = "dashed", position = position_dodge())
+bxp_cda_hph
+```
+
+**Mean CDA amplitude by set size**
+
+```{r}
+#summary stats
+cda %>% group_by(stimuli_count) %>% get_summary_stats(mean_cda, type = "mean_sd")
+```
+
+## **CHECK ASSUMPTIONS**
+
+1.  **Linearity assumption**
+
+```{r}
+ggscatter(
+  cda, x = "age", y = "mean_cda",
+  color = "group", add = "reg.line"
+  )+
+  stat_regline_equation(
+    aes(label =  paste(..eq.label.., ..rr.label.., sep = "~~~~"), color = group)
+    )
+```
+
+2.  **Homogeneity of regression slopes**
+
+```{r}
+
+cda %>% anova_test(mean_cda ~ group * age)
+```
+
+3.  **Normality of residuals**
+
+```{r}
+cda |> 
+  group_by(group, hemisphere, stimuli_count) |> 
+  shapiro_test(mean_cda)
+```
+
+4.  **Homogeneity of variances**
+
+```{r}
+cda |>
+  group_by(hemisphere, stimuli_count) |> 
+  levene_test(mean_cda~group)
+```
+
+5.  **Outliers**
+
+```{r}
+cda |> 
+group_by(group) |> 
+identify_outliers(mean_cda)
+```
+
+**QQ plot**
+
+```{r}
+ggqqplot(cda, "mean_cda", ggtheme = theme_bw()) + facet_grid(stimuli_count ~ group*hemisphere)
+```
+
+Just in two cases parametricity assumption was little bit violated, therefore we can use parametric statistics
+
+
+## mixed ANCOVA
+
+
+```{r}
+aov <- anova_test(data = cda, dv = mean_cda, wid = id,
+  between = group, within = c(stimuli_count, hemisphere), covariate = age
+  )
+get_anova_table(aov)
+```
+
+```{r}
+
+mean_cda <- ggplot(cda, aes(x = group, y = mean_cda, fill = group)) +
+  geom_boxplot(width = 0.6, position = position_dodge(width = 0.8), color = "black", alpha = 0.7, outlier.shape = TRUE) + 
+  labs(x = " ", y = "Mean CDA amplitude (µV)", fill = "Group") +
+  scale_fill_manual(values = c("#0072B2", "#009E73", "#E69F00", "#999999", "#CC79A7")) +
+  theme_classic() +
+  theme(axis.text = element_text(size = 14, color = "black"), axis.title = element_text(size = 18, color = "black"),
+        legend.position = "right", legend.title = element_text(size = 16), legend.text = element_text(size = 14)) 
+
+# Print the plot
+mean_cda
+```
+
+```{r}
+ggsave("figures/mean_cda.png", mean_cda, width = 6, height = 4.5)
+```

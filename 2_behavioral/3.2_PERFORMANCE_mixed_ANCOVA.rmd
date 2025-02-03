@@ -1,0 +1,309 @@
+
+
+```{r message=FALSE, warning=FALSE, include=FALSE, paged.print=FALSE}
+library(tidyverse)
+library(readxl)
+library(writexl)
+library(DescTools)
+library(ggpubr)
+library(rstatix)
+library(afex)
+library(emmeans)
+library(effectsize)
+```
+
+https://www.datanovia.com/en/lessons/ancova-in-r/#post-hoc-test-1
+
+```{r}
+# load the data
+beh_params <-
+  read_xlsx("cap_perf_rt_for_stats.xlsx")
+
+demographic <- read_xlsx("clean_demographic_questionnaires_hormones.xlsx")
+
+age = demographic[c("id", "group", "age")]
+
+head(beh_params)
+
+
+```
+
+
+```{r}
+# Inspect column names
+
+performance <- beh_params[, c('id', 'stimuli_count', 'performance', 'group')]
+head(performance)
+
+```
+
+
+**Remove Participants' Data**
+
+```{r}
+# Load the subject IDs from the text file into a vector
+subjects_to_remove <- readLines("subjects_to_remove.txt", warn = FALSE)
+
+# Convert the vector of strings to numeric
+subjects_to_remove <- as.numeric(subjects_to_remove)
+
+# Print the vector to confirm
+print(subjects_to_remove)
+
+```
+
+
+```{r}
+
+# Exclude subject's data
+performance <- performance %>%
+  filter(!id %in% subjects_to_remove)
+
+# Remove male group
+#performance <- performance[!(performance$group == "M"), ]
+
+# Standardize all column names to lowercase
+names(performance) <- tolower(names(performance))
+
+# Merge with age
+performance <- merge(performance, age, by = c("id", "group"), all.x = TRUE)
+
+# Convert 'group' column to a factor and reorder its levels
+performance <- performance %>%
+  mutate(group = factor(group, levels = c("M", "NCF", "NCL", "OC", "IUD")))
+
+head(performance)
+```
+
+
+##  **Desciptive Stats (between groups)**
+```{r}
+performance %>% group_by(group) %>% get_summary_stats(performance, type = "mean_sd")
+```
+
+
+**Visualizations**
+```{r}
+
+bxp_perf <-
+  ggboxplot(
+    performance, 
+    x = "group",
+    y = "performance",
+    xlab = "Group",
+    ylab = "Performance\n(%)",
+    fill = "group") + scale_fill_manual(values = c("#FFCC33", "#CCFF66", "#FF99CC", "#9966CC", "#009E73")) + theme(legend.position = "none") + font("axis.title", size = 22) + 
+ font("xy.text", size = 18)  + stat_summary(fun.y = mean, geom = "errorbar", aes(ymax = ..y.., ymin = ..y.., group = factor(group)), width = 0.8, linetype = "dashed", position = position_dodge())
+plot(bxp_perf)
+```
+
+
+```{r}
+
+# convert values to factors
+performance <- performance %>% convert_as_factor(id, group, stimuli_count)
+performance <-
+  performance %>% reorder_levels("group", order = c("M","NCF", "NCL", "OC", "IUD" )) %>% reorder_levels("stimuli_count", order = c("3_stim", "4_stim"))
+
+head(performance)
+```
+
+
+# **DESCRIPTIVE STATS**
+
+```{r}
+#summary stats
+performance %>% group_by(stimuli_count, group) %>% get_summary_stats(performance, type = "mean_sd")
+
+```
+
+```{r}
+performance %>% group_by(stimuli_count) %>% get_summary_stats(performance, type = "mean_sd")
+```
+**Visualizations**
+
+```{r}
+
+bxp_perf_stim <-
+  ggboxplot(
+    performance,
+    x = "stimuli_count",
+    y = "performance",
+    fill = "group",
+    xlab = "Set Size",
+    legend.title = "Group",
+    ylab = "Performance (%)",
+    alpha = 0.7,
+    palette = c("#FFFF66", "#33CC33","#663333", "#FF0066",  "#0000FF")) + scale_x_discrete(labels = c("3 stimuli", "4 stimuli")) + theme(legend.position = "right")
+
+bxp_perf_stim
+```
+
+
+```{r}
+bxp_stim <-
+  ggboxplot(
+    performance,
+    x = "stimuli_count",
+    y = "performance",
+    xlab = "Set Size",
+    ylab = "Performance (%)",
+    alpha = 0.3) + scale_x_discrete(labels = c("3 stimuli", "4 stimuli"))
+
+bxp_stim
+```
+
+
+
+## **Check Assumptions**
+
+1. **Linearity Assumption**
+
+```{r}
+
+ggscatter(
+  performance, x = "age", y = "performance",
+  facet.by  = c("group", "stimuli_count"), 
+  short.panel.labs = FALSE
+  )+
+  stat_smooth(method = "lm", span = 0.9)
+
+```
+
+
+2. **Homogeneity of regression slopes**
+
+```{r}
+
+
+performance %>%
+  anova_test(
+    performance ~ age + stimuli_count + group + 
+     stimuli_count*group + age*stimuli_count +
+     age*group + age*group*stimuli_count
+  )
+
+```
+
+3. **Normality assumption**
+
+```{r}
+performance |> 
+  group_by(group, stimuli_count) |> 
+  shapiro_test(performance)
+```
+
+```{r}
+ggplot(performance, aes(sample = performance)) +
+  stat_qq() +
+  stat_qq_line() +
+  facet_wrap(~ group)
+```
+
+
+5. **Homogeneity of variances**
+
+```{r}
+
+levene_test(performance, performance~group)
+
+
+```
+
+5. **Outliers**
+
+```{r}
+performance |> 
+group_by(group) |> 
+identify_outliers(performance)
+```
+
+
+## **Mixed ANCOVA**
+```{r}
+
+aov <- anova_test(
+  data = performance, 
+  dv = performance, 
+  wid = id, 
+  between = group, 
+  within = stimuli_count, 
+  covariate = age
+)
+
+get_anova_table(aov)
+
+```
+
+## **POST-HOC**
+
+
+
+```{r}
+
+pwc <- performance %>%
+  group_by(stimuli_count) %>%  
+  emmeans_test(
+    performance ~ group, covariate = age, 
+    p.adjust.method = "bonferroni"
+    ) 
+pwc
+```
+
+
+```{r}
+
+pwc2 <- performance %>%
+  group_by(group) %>%  
+  emmeans_test(
+    performance ~ stimuli_count, covariate = age, 
+    p.adjust.method = "bonferroni"
+    ) 
+pwc2
+
+```
+
+```{r}
+performance.png <- ggplot(performance, aes(x = stimuli_count, y = performance, fill = group)) +
+  geom_violin(aes(fill = group), position = position_dodge(width = 0.8), trim = FALSE) + # Add fill aesthetic
+  geom_boxplot(aes(fill = group), width = 0.2, position = position_dodge(width = 0.8)) + # Add fill aesthetic
+  geom_jitter(position = position_dodge(width = 0.8), alpha = 0.5) +
+  labs(x = " ", y = "Performance (%)", fill = "Group") + # Specify legend title
+  scale_fill_manual(values = c("#0072B2", "#009E73", "#E69F00", "#999999", "#CC79A7")) +
+  theme_classic() +
+  theme(axis.text = element_text(size = 14), axis.title = element_text(size = 18),
+        legend.position = "right", legend.title = element_text(size = 16), legend.text = element_text(size = 14))+
+   ylim(0, 110)+
+  scale_x_discrete(labels = c("3 stimuli", "4 stimuli"))
+
+
+performance.png
+```
+
+
+```{r}
+performance.png <- ggplot(performance, aes(x = stimuli_count, y = performance, fill = group)) +
+  geom_boxplot(aes(fill = group), width = 0.6, position = position_dodge(width = 0.8),
+               color = "black", # Modify box color and fill
+               alpha = 0.7, # Add transparency to fill color
+               outlier.shape = TRUE) + # Remove outliers
+  labs(x = " ", y = "Performance (%)", fill = "Group") +
+  scale_fill_manual(values = c("#0072B2", "#009E73", "#E69F00", "#999999", "#CC79A7")) +
+  theme_classic() +
+  theme(axis.text = element_text(size = 14), axis.title = element_text(size = 18),
+        legend.position = "right", legend.title = element_text(size = 16), legend.text = element_text(size = 14)) +
+  scale_x_discrete(labels = c("3 stimuli", "4 stimuli"))+
+  ylim(0, 110)
+
+
+performance.png
+```
+```{r}
+ggsave("figures/performance.png", performance.png, width = 6, height = 4.5)
+```
+
+
+```{r}
+performance |> cor_test(performance, age)
+```
+
